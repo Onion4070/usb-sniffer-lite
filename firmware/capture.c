@@ -373,6 +373,9 @@ static void process_buffer(void)
     else
     {
       process_packet(size-1);
+
+      if (size % 31 <= 1)
+        g_rd_ptr++;
     }
   }
 

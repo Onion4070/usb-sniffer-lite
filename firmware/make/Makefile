@@ -10,9 +10,15 @@ OBJCOPY = arm-none-eabi-objcopy
 SIZE = arm-none-eabi-size
 
 ifeq ($(OS), Windows_NT)
-  MKDIR = gmkdir
+  MKDIR = mkdir
+  MKDIR_ARGS =
+  RM = cmd /C rmdir /S /Q
+  CP = cmd /C copy /Y
 else
   MKDIR = mkdir
+  MKDIR_ARGS = -p
+  RM = rm -rf
+  CP = cp -f
 endif
 
 CFLAGS += -W -Wall --std=gnu11 -Os
@@ -73,10 +79,11 @@ $(BUILD)/$(BIN).uf2: $(BUILD)/$(BIN).bin
 
 release: $(BUILD)/$(BIN).uf2
 	@echo release
-	@cp $(BUILD)/$(BIN).uf2 ../../bin/
+	@$(MKDIR) $(MKDIR_ARGS) ../../bin
+	@-$(CP) $(BUILD)/$(BIN).uf2 ../../bin/
 
 directory:
-	@$(MKDIR) -p $(BUILD)
+	@$(MKDIR) $(MKDIR_ARGS) $(BUILD)
 
 size: $(BUILD)/$(BIN).elf
 	@echo size:
@@ -84,6 +91,6 @@ size: $(BUILD)/$(BIN).elf
 
 clean:
 	@echo clean
-	@-rm -rf $(BUILD)
+	@-$(RM) $(BUILD)
 
 -include $(wildcard $(BUILD)/*.d)

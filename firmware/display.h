@@ -14,5 +14,6 @@ void display_puthex(uint32_t v, int size);
 void display_putdec(uint32_t v, int size);
 
 void display_buffer(void);
+void display_data_only_buffer(void);
 
 #endif // _DISPLAY_H_

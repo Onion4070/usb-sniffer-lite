@@ -591,12 +591,22 @@ static void capture_buffer(void)
       {
         g_buffer[packet+0] = 0xffffffff - v;
         g_buffer[packet+1] = TIMER->TIMELR;
-        g_buffer_info.count++;
-        packet = index;
-        index += 2;
+      g_buffer_info.count++;
+      bool reached_limit = (g_buffer_info.count == g_buffer_info.limit);
 
-        if (g_buffer_info.count == g_buffer_info.limit)
-          break;
+      /* 新たに1フレーム分のヘッダが書き込まれたので、ここでバッファを処理して
+        シリアルへ出力する。処理後はバッファをリセットして上書き可能にする。 */
+  process_buffer();
+  display_data_only_buffer();
+
+      /* バッファを上書きできるようにインデックスをリセット */
+      index = 2;
+      packet = 0;
+      g_buffer_info.count = 0;
+
+      /* キャプチャ制限に達していたら終了 */
+      if (reached_limit)
+       break;
       }
       else
       {
@@ -614,7 +624,7 @@ static void capture_buffer(void)
   display_puts("Capture stopped\r\n");
 
   process_buffer();
-  display_buffer();
+  display_data_only_buffer();
 }
 
 //-----------------------------------------------------------------------------

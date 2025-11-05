@@ -131,7 +131,7 @@ static void status_timer_task(void)
   {
     TIMER->INTR = TIMER_INTR_ALARM_0_Msk;
     TIMER->ALARM0 = TIMER->TIMELR + STATUS_TIMEOUT;
-    HAL_GPIO_LED_O_toggle();
+    // HAL_GPIO_LED_O_toggle(); disable LED
   }
 }
 

@@ -596,8 +596,8 @@ static void capture_buffer(void)
 
       /* 新たに1フレーム分のヘッダが書き込まれたので、ここでバッファを処理して
         シリアルへ出力する。処理後はバッファをリセットして上書き可能にする。 */
-  process_buffer();
-  display_data_only_buffer();
+      process_buffer();
+      display_data_only_buffer();
 
       /* バッファを上書きできるようにインデックスをリセット */
       index = 2;
@@ -606,7 +606,7 @@ static void capture_buffer(void)
 
       /* キャプチャ制限に達していたら終了 */
       if (reached_limit)
-       break;
+        break;
       }
       else
       {

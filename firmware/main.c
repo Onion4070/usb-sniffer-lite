@@ -21,7 +21,7 @@
 #define F_TICK     1000000
 
 #define USB_BUFFER_SIZE    64
-#define VCP_TIMEOUT        10000 // us
+#define VCP_TIMEOUT        100 // us    // デフォルト10msが長すぎるため(240Hz通信の関係)
 #define STATUS_TIMEOUT     500000 // us
 
 HAL_GPIO_PIN(LED_O, 0, 25, sio_25)

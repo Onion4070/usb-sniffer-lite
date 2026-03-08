@@ -195,11 +195,8 @@ static void print_data(char *pid, uint8_t *data, int size)
 {
   size -= 4;
 
-  // display_puts(pid);
-
   if (size == 0)
   {
-    // display_puts(": ZLP\r\n");
   }
   else
   {
@@ -212,20 +209,16 @@ static void print_data(char *pid, uint8_t *data, int size)
     else if (g_display_data == DisplayData_Limit64)
       limited = LIMIT(size, 64);
 
-    // display_puts(" (");
-    // display_putdec(size, 0);
-    // display_puts("): ");
-
+    // 開始データ
+    display_putc(0xaa);
+    display_putc(limited);
+    // パケット生データ送信
     for (int j = 0; j < limited; j++)
     {
-      display_puthex(data[j+2], 2);
-      // display_putc(' ');
+      display_putc(data[j+2]);
     }
-
-    if (limited < size)
-      display_puts("...");
-
-    display_puts("\r\n");
+    // 終了データ
+    display_putc(0xbb);
   }
 }
 

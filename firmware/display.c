@@ -381,36 +381,3 @@ void display_buffer(void) {
     display_value(g_buffer_info.folded, "empty frame");
     display_puts("\r\n\r\n");
 }
-
-//-----------------------------------------------------------------------------
-// Print only DATA0/DATA1 packets (used for automatic streaming mode)
-//-----------------------------------------------------------------------------
-void display_data_only_buffer(void) {
-    if (g_buffer_info.count == 0) return;
-
-    g_ref_time = g_buffer[1];
-    g_prev_time = g_buffer[1];
-    g_display_ptr = 0;
-    g_check_delta = true;
-
-    for (int i = 0; i < g_buffer_info.count; i++) {
-        int flags = g_buffer[g_display_ptr];
-        int time = g_buffer[g_display_ptr + 1];
-        int size = flags & CAPTURE_SIZE_MASK;
-        uint8_t* payload = (uint8_t*)&g_buffer[g_display_ptr + 2];
-        int pid = payload[1] & 0x0f;
-
-        g_display_ptr += (((size + 3) / 4) + 2);
-
-        /* Only print DATA0 and DATA1 packets */
-        if (pid == Pid_Data0 || pid == Pid_Data1) {
-            int ftime = time - g_ref_time;
-
-            if (g_display_time == DisplayTime_SOF && pid == Pid_Sof)
-                g_ref_time = time;
-
-            // print_time(ftime);
-            print_data("", payload, size);
-        }
-    }
-}

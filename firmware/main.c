@@ -255,10 +255,14 @@ bool usb_class_handle_request(usb_request_t* request) {
 }
 
 //-----------------------------------------------------------------------------
-void usb_configuration_callback(int config) { (void)config; }
+void usb_configuration_callback(int config) { 
+    (void)config; 
+}
 
 //-----------------------------------------------------------------------------
-void set_error(bool error) { HAL_GPIO_LED_R_write(error); }
+void set_error(bool error) { 
+    HAL_GPIO_LED_R_write(error); 
+}
 
 //-----------------------------------------------------------------------------
 int main(void) {

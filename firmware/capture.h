@@ -25,16 +25,15 @@
 #define CAPTURE_SIZE_MASK      0xffff
 
 /*- Types -------------------------------------------------------------------*/
-typedef struct
-{
-  bool     fs;
-  bool     trigger;
-  int      limit;
-  int      count;
-  int      errors;
-  int      resets;
-  int      frames;
-  int      folded;
+typedef struct {
+    bool fs;
+    bool trigger;
+    int limit;
+    int count;
+    int errors;
+    int resets;
+    int frames;
+    int folded;
 } buffer_info_t;
 
 /*- Prototypes --------------------------------------------------------------*/

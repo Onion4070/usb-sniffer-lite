@@ -31,13 +31,18 @@ typedef struct {
     uint32_t sof;
     uint32_t matched_data;
     uint32_t unmatched_data;
-    uint32_t endpoint_overflow;
+    uint32_t endpoint_evictions;
 } stream_decode_stats_t;
 
 // Call once on Core 0 before capture_init().
 void stream_decode_init(void);
 // Core 0 only; consumes one queued raw PIO packet.
 void stream_decode_packet(const stream_packet_t *packet);
+// Core 1 requests a clean endpoint table at capture start; Core 0 executes it.
+uint32_t stream_decode_request_endpoint_reset(void);
+bool stream_decode_endpoint_reset_complete(uint32_t request);
+// Call on Core 0 once per main loop, before stream_consumer_task().
+void stream_decode_service(void);
 // Safe to call from Core 1 after capture has stopped.
 void stream_decode_get_stats(stream_decode_stats_t *out);
 // Snapshot the discovered endpoints after the capture queue has drained.

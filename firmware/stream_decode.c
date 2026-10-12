@@ -67,6 +67,12 @@ static stream_endpoint_stats_t endpoints[STREAM_ENDPOINT_SLOTS];
 static uint32_t endpoint_count;
 static bool pending_in;
 static uint32_t pending_slot;
+static uint32_t last_seen[STREAM_ENDPOINT_SLOTS];
+static uint32_t access_sequence;
+
+// Core 1 requests a reset; Core 0 performs it at a safe point.
+static uint32_t reset_request;
+static uint32_t reset_ack;
 
 // Cortex-M0+ supports aligned 32-bit atomic loads/stores, but not
 // __atomic_fetch_add_4 without an external runtime. Single writer: Core 0.
@@ -75,24 +81,67 @@ static void increment(uint32_t *p) {
     __atomic_store_n(p, v + 1u, __ATOMIC_RELAXED);
 }
 
-// 既に登録済みのEndPoint/Addressのインデックスを返す．なければ新規登録する．登録済みの数がSTREAM_ENDPOINT_SLOTSを超える場合は-1を返す．
+// 既に登録済みのEndPoint/Addressのインデックスを返す．なければ新規登録する．
 static int get_endpoint_slot(uint32_t addr, uint32_t ep) {
-    for (uint32_t i = 0; i < endpoint_count; i++) {
-        if (endpoints[i].addr == addr && endpoints[i].ep == ep)
+    uint32_t now = ++access_sequence;
+
+    // 登録済みのエントリを検索
+    for (uint32_t i = 0; i < endpoint_count; ++i) {
+        if (endpoints[i].addr == addr && endpoints[i].ep == ep) {
+            last_seen[i] = now;
             return (int)i;
+        }
     }
-    if (endpoint_count == STREAM_ENDPOINT_SLOTS) {
-        increment(&stats.endpoint_overflow);
-        return -1;
+
+    uint32_t slot;
+    // スロットに空きあり
+    if (endpoint_count < STREAM_ENDPOINT_SLOTS) {
+        slot = endpoint_count++;
+    } 
+    else {
+        // LRU置換で古いエントリを上書き
+        slot = 0;
+        uint32_t oldest_age = 0;
+        for (uint32_t i = 0; i < STREAM_ENDPOINT_SLOTS; ++i) {
+            uint32_t age = now - last_seen[i];
+            if (age > oldest_age) {
+                oldest_age = age;
+                slot = i;
+            }
+        }
+        increment(&stats.endpoint_evictions);
     }
-    uint32_t i = endpoint_count;
-    endpoints[i].addr = addr;
-    endpoints[i].ep = ep;
-    endpoints[i].in_tokens = 0;
-    endpoints[i].data_packets = 0;
-    endpoints[i].nak_packets = 0;
-    __atomic_store_n(&endpoint_count, i + 1u, __ATOMIC_RELEASE);
-    return (int)i;
+
+    endpoints[slot].addr = addr;
+    endpoints[slot].ep = ep;
+    endpoints[slot].in_tokens = 0;
+    endpoints[slot].data_packets = 0;
+    endpoints[slot].nak_packets = 0;
+    last_seen[slot] = now;
+    return (int)slot;
+}
+
+// Called from Core 1 before starting PIO. Completion is checked separately.
+uint32_t stream_decode_request_endpoint_reset(void) {
+    uint32_t request = __atomic_load_n(&reset_request, __ATOMIC_RELAXED) + 1u;
+    __atomic_store_n(&reset_request, request, __ATOMIC_RELEASE);
+    return request;
+}
+
+bool stream_decode_endpoint_reset_complete(uint32_t request) {
+    return __atomic_load_n(&reset_ack, __ATOMIC_ACQUIRE) == request;
+}
+
+// Core 0 only; run before consuming new queue items.
+void stream_decode_service(void) {
+    uint32_t request = __atomic_load_n(&reset_request, __ATOMIC_ACQUIRE);
+    if (request == __atomic_load_n(&reset_ack, __ATOMIC_RELAXED)) return;
+
+    endpoint_count = 0;
+    pending_in = false;
+    pending_slot = 0;
+    access_sequence = 0;
+    __atomic_store_n(&reset_ack, request, __ATOMIC_RELEASE);
 }
 
 uint32_t stream_decode_get_endpoints(stream_endpoint_stats_t *out, uint32_t capacity) {
@@ -113,6 +162,9 @@ void stream_decode_init(void) {
     endpoint_count = 0;
     pending_in = false;
     pending_slot = 0;
+    access_sequence = 0;
+    reset_request = 0;
+    reset_ack = 0;
     uint32_t *p = (uint32_t *)&stats;
     for (unsigned i = 0; i < sizeof(stats)/sizeof(uint32_t); ++i)
         __atomic_store_n(&p[i], 0, __ATOMIC_RELAXED);
@@ -245,10 +297,7 @@ void stream_decode_packet(const stream_packet_t *packet) {
 
             // IN Token(16bit)
             // Addr(7bit) | EndPoint(4bit) | CRC5(5bit)
-            uint32_t token =
-                (uint32_t)decoded[2] |
-                ((uint32_t)decoded[3] << 8);
-
+            uint32_t token = (uint32_t)decoded[2] | ((uint32_t)decoded[3] << 8);
             uint32_t addr = token & 0x7fu;
             uint32_t ep = (token >> 7) & 0x0fu;
 
@@ -296,6 +345,7 @@ void stream_decode_packet(const stream_packet_t *packet) {
     }
 
 done:
+    if (error) pending_in = false;
     if (error) increment(&stats.errors);
     else       increment(&stats.valid);
     

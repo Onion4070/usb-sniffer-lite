@@ -284,14 +284,22 @@ static void capture_buffer(void) {
     uint32_t start_consumed = stream_queue_consumed();
     stream_decode_stats_t before, after;
     stream_decode_get_stats(&before);
-    stream_endpoint_stats_t endpoint_before[STREAM_ENDPOINT_SLOTS];
-    uint32_t endpoint_before_count = stream_decode_get_endpoints(endpoint_before, STREAM_ENDPOINT_SLOTS);
 
     set_error(false);
 
     if (!wait_for_trigger()) {
         display_puts("Capture stopped\r\n");
         return;
+    }
+
+    // エンドポイントの管理情報をリセット，Core 0が完了するまで待機
+    uint32_t reset_id = stream_decode_request_endpoint_reset();
+    uint32_t reset_deadline = TIMER->TIMELR + 1000000u;
+    while (!stream_decode_endpoint_reset_complete(reset_id)) {
+        if ((int32_t)(TIMER->TIMELR - reset_deadline) >= 0) {
+            display_puts("Endpoint reset timeout\r\n");
+            return;
+        }
     }
 
     display_puts("Capture started\r\n");
@@ -403,8 +411,8 @@ static void capture_buffer(void) {
     display_putdec(after.matched_data - before.matched_data, 0);
     display_puts(" UnmatchedDATA=");
     display_putdec(after.unmatched_data - before.unmatched_data, 0);
-    display_puts(" EndpointOverflow=");
-    display_putdec(after.endpoint_overflow - before.endpoint_overflow, 0);
+    display_puts(" EndpointEvictions=");
+    display_putdec(after.endpoint_evictions - before.endpoint_evictions, 0);
     display_puts("\r\n");
 
     stream_endpoint_stats_t endpoint_after[STREAM_ENDPOINT_SLOTS];
@@ -413,19 +421,11 @@ static void capture_buffer(void) {
     display_puts("Endpoint statistics (this capture):\r\n");
     for (uint32_t i = 0; i < endpoint_after_count; ++i) {
         const stream_endpoint_stats_t *entry = &endpoint_after[i];
-        uint32_t in_before = 0, data_before = 0, nak_before = 0;
-        for (uint32_t j = 0; j < endpoint_before_count; ++j) {
-            if (endpoint_before[j].addr == entry->addr &&
-                endpoint_before[j].ep == entry->ep) {
-                in_before = endpoint_before[j].in_tokens;
-                data_before = endpoint_before[j].data_packets;
-                nak_before = endpoint_before[j].nak_packets;
-                break;
-            }
-        }
-        uint32_t in_count = entry->in_tokens - in_before;
-        uint32_t data_count = entry->data_packets - data_before;
-        uint32_t nak_count = entry->nak_packets - nak_before;
+        // Endpoint counters start at zero for this capture. Evicted entries
+        // cannot be listed; their replacement count is reported separately.
+        uint32_t in_count = entry->in_tokens;
+        uint32_t data_count = entry->data_packets;
+        uint32_t nak_count = entry->nak_packets;
         if (!in_count && !data_count && !nak_count) continue;
         display_puts("  Addr=");
         display_putdec(entry->addr, 0);

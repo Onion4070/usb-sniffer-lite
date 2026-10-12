@@ -12,6 +12,7 @@
 #include "display.h"
 #include "globals.h"
 #include "stream_queue.h"
+#include "stream_decode.h"
 #include "hal_gpio.h"
 #include "pio_asm.h"
 #include "rp2040.h"
@@ -548,6 +549,8 @@ static void capture_buffer(void) {
 
     uint32_t start_dropped = stream_queue_dropped();
     uint32_t start_consumed = stream_queue_consumed();
+    stream_decode_stats_t before, after;
+    stream_decode_get_stats(&before);
 
     set_error(false);
 
@@ -606,6 +609,18 @@ static void capture_buffer(void) {
     PIO0_CLR->CTRL = (1 << (PIO0_CTRL_SM_ENABLE_Pos + 0));
     PIO1_CLR->CTRL = (1 << (PIO0_CTRL_SM_ENABLE_Pos + 0));
 
+    // Drain the queueand let Core 0 finish decoding before reporting.
+    // The consumer runs continuously in main() on Core 0.
+    uint32_t accepted = captured - oversized - (stream_queue_dropped() - start_dropped);
+    uint32_t deadline = TIMER->TIMELR + 1000000u;  // 1 second timeout
+
+    do {
+        stream_decode_get_stats(&after);
+        if ((uint32_t)(after.processed - before.processed) >= accepted) break;
+    } while ((int32_t)(TIMER->TIMELR - deadline) < 0);
+
+    stream_decode_get_stats(&after);
+
     display_puts("Capture stopped: packets=");
     display_putdec(captured, 0);
 
@@ -621,6 +636,32 @@ static void capture_buffer(void) {
     display_puts(" pending=");
     display_putdec(stream_queue_pending(), 0);
 
+    display_puts("\r\n");
+    display_puts("Decoded=");
+    display_putdec(after.processed - before.processed, 0);
+    display_puts(" Valid=");
+    display_putdec(after.valid - before.valid, 0);
+    display_puts(" Errors=");
+    display_putdec(after.errors - before.errors, 0);
+    display_puts(" CRC=");
+    display_putdec(after.crc - before.crc, 0);
+    display_puts(" PID=");
+    display_putdec(after.pid - before.pid, 0);
+    display_puts(" STUFF=");
+    display_putdec(after.stuff - before.stuff, 0);
+    display_puts(" SYNC=");
+    display_putdec(after.sync - before.sync, 0);
+    display_puts(" NBIT=");
+    display_putdec(after.nbit - before.nbit, 0);
+    display_puts(" SIZE=");
+    display_putdec(after.size - before.size, 0);
+    display_puts("\r\n");
+    display_puts("IN=");
+    display_putdec(after.in - before.in, 0);
+    display_puts(" DATA=");
+    display_putdec(after.data - before.data, 0);
+    display_puts(" SOF=");
+    display_putdec(after.sof - before.sof, 0);
     display_puts("\r\n");
 }
 

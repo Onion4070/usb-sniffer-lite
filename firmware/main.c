@@ -10,6 +10,7 @@
 #include "hal_gpio.h"
 #include "capture.h"
 #include "stream_queue.h"
+#include "stream_decode.h"
 #include "globals.h"
 #include "utils.h"
 #include "usb.h"
@@ -45,8 +46,7 @@ static void stream_consumer_task(void) {
         if (!stream_queue_pop(&packet))
             break;
 
-        // 取り出すだけ
-        (void)packet;
+        stream_decode_packet(&packet);
     }
 }
 
@@ -269,6 +269,7 @@ int main(void) {
     serial_number_init();
 
     stream_queue_init();
+    stream_decode_init();
 
     capture_init();
 

@@ -327,12 +327,12 @@ static void capture_buffer(void) {
             } 
             else {
                 // USBパケットの生データを受信
-                if (too_long) continue;
-
-                if (current.word_count < STREAM_MAX_WORDS)
-                    current.words[current.word_count++] = v;
-                else
-                    too_long = true;
+                if (!too_long) {
+                    if (current.word_count < STREAM_MAX_WORDS)
+                        current.words[current.word_count++] = v;
+                    else
+                        too_long = true;
+                }
             }
         }
 

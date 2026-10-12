@@ -202,6 +202,10 @@ static void display_task(void) {
 
 //-----------------------------------------------------------------------------
 static void vcp_timer_task(void) {
+    // 前回のUSB CDC送信が完了するまで待機
+    if (app_send_pending)
+        return;
+
     if (vcp_timeout()) {
         if (app_send_zlp || app_send_buffer_ptr) send_buffer();
     }
@@ -286,6 +290,7 @@ int main(void) {
     while (1) {
         usb_task();
 
+        stream_decode_service();
         stream_consumer_task();
 
         display_task();

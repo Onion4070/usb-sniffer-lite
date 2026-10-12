@@ -19,7 +19,8 @@ bool stream_queue_push(const stream_packet_t* packet) {
     uint32_t r = __atomic_load_n(&read_index, __ATOMIC_ACQUIRE);
 
     if ((uint32_t)(w - r) >= STREAM_QUEUE_SIZE) {
-        __atomic_fetch_add(&dropped, 1, __ATOMIC_RELAXED);
+        uint32_t d = __atomic_load_n(&dropped, __ATOMIC_RELAXED);
+        __atomic_store_n(&dropped, d + 1, __ATOMIC_RELAXED);
         return false;
     }
 
@@ -49,4 +50,8 @@ uint32_t stream_queue_pending(void) {
     uint32_t w = __atomic_load_n(&write_index, __ATOMIC_ACQUIRE);
     uint32_t r = __atomic_load_n(&read_index, __ATOMIC_ACQUIRE);
     return (uint32_t)(w - r);
+}
+
+uint32_t stream_queue_consumed(void) {
+    return __atomic_load_n(&read_index, __ATOMIC_ACQUIRE);
 }

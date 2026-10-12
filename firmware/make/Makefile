@@ -43,6 +43,7 @@ SRCS += \
   ../utils.c \
   ../capture.c \
   ../display.c \
+  ../stream_queue.c \
   ../usb.c \
   ../usb_std.c \
   ../usb_cdc.c \

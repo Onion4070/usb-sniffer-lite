@@ -9,6 +9,7 @@
 #include "rp2040.h"
 #include "hal_gpio.h"
 #include "capture.h"
+#include "stream_queue.h"
 #include "globals.h"
 #include "utils.h"
 #include "usb.h"
@@ -37,6 +38,17 @@ static bool app_recv_pending = false;
 static bool app_vcp_open = false;
 
 /*- Implementations ---------------------------------------------------------*/
+static void stream_consumer_task(void) {
+    stream_packet_t packet;
+
+    for (int i = 0; i < 8; i++) {
+        if (!stream_queue_pop(&packet))
+            break;
+
+        // 取り出すだけ
+        (void)packet;
+    }
+}
 
 //-----------------------------------------------------------------------------
 static void sys_init(void)
@@ -282,6 +294,9 @@ int main(void)
   usb_init();
   usb_cdc_init();
   serial_number_init();
+
+  stream_queue_init();
+
   capture_init();
 
   HAL_GPIO_LED_O_out();
@@ -293,6 +308,9 @@ int main(void)
   while (1)
   {
     usb_task();
+
+    stream_consumer_task();
+    
     display_task();
     vcp_timer_task();
     status_timer_task();

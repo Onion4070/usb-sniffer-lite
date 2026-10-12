@@ -284,6 +284,8 @@ static void capture_buffer(void) {
     uint32_t start_consumed = stream_queue_consumed();
     stream_decode_stats_t before, after;
     stream_decode_get_stats(&before);
+    stream_endpoint_stats_t endpoint_before[STREAM_ENDPOINT_SLOTS];
+    uint32_t endpoint_before_count = stream_decode_get_endpoints(endpoint_before, STREAM_ENDPOINT_SLOTS);
 
     set_error(false);
 
@@ -301,6 +303,7 @@ static void capture_buffer(void) {
         if (0 == (PIO0->FSTAT & (1 << (PIO0_FSTAT_RXEMPTY_Pos + 0)))) {
             uint32_t v = PIO0->RXF0;
 
+            // 最上位bitが1 -> パケット終了
             if (v & 0x80000000) {
                 current.bit_count = 0xffffffff - v;
                 current.timestamp = TIMER->TIMELR;
@@ -396,6 +399,46 @@ static void capture_buffer(void) {
     display_puts(" SOF=");
     display_putdec(after.sof - before.sof, 0);
     display_puts("\r\n");
+    display_puts(" MatchedIN_DATA=");
+    display_putdec(after.matched_data - before.matched_data, 0);
+    display_puts(" UnmatchedDATA=");
+    display_putdec(after.unmatched_data - before.unmatched_data, 0);
+    display_puts(" EndpointOverflow=");
+    display_putdec(after.endpoint_overflow - before.endpoint_overflow, 0);
+    display_puts("\r\n");
+
+    stream_endpoint_stats_t endpoint_after[STREAM_ENDPOINT_SLOTS];
+    uint32_t endpoint_after_count = stream_decode_get_endpoints(
+        endpoint_after, STREAM_ENDPOINT_SLOTS);
+    display_puts("Endpoint statistics (this capture):\r\n");
+    for (uint32_t i = 0; i < endpoint_after_count; ++i) {
+        const stream_endpoint_stats_t *entry = &endpoint_after[i];
+        uint32_t in_before = 0, data_before = 0, nak_before = 0;
+        for (uint32_t j = 0; j < endpoint_before_count; ++j) {
+            if (endpoint_before[j].addr == entry->addr &&
+                endpoint_before[j].ep == entry->ep) {
+                in_before = endpoint_before[j].in_tokens;
+                data_before = endpoint_before[j].data_packets;
+                nak_before = endpoint_before[j].nak_packets;
+                break;
+            }
+        }
+        uint32_t in_count = entry->in_tokens - in_before;
+        uint32_t data_count = entry->data_packets - data_before;
+        uint32_t nak_count = entry->nak_packets - nak_before;
+        if (!in_count && !data_count && !nak_count) continue;
+        display_puts("  Addr=");
+        display_putdec(entry->addr, 0);
+        display_puts(" EP=");
+        display_putdec(entry->ep, 0);
+        display_puts(" IN=");
+        display_putdec(in_count, 0);
+        display_puts(" DATA=");
+        display_putdec(data_count, 0);
+        display_puts(" NAK=");
+        display_putdec(nak_count, 0);
+        display_puts("\r\n");
+    }
 }
 
 //-----------------------------------------------------------------------------

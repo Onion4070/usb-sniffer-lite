@@ -62,6 +62,12 @@ static const uint8_t crc5_usb_tab[256] = {
 
 static stream_decode_stats_t stats;
 
+// Single writer: Core 0. Readers inspect these after the queue is drained.
+static stream_endpoint_stats_t endpoints[STREAM_ENDPOINT_SLOTS];
+static uint32_t endpoint_count;
+static bool pending_in;
+static uint32_t pending_slot;
+
 // Cortex-M0+ supports aligned 32-bit atomic loads/stores, but not
 // __atomic_fetch_add_4 without an external runtime. Single writer: Core 0.
 static void increment(uint32_t *p) {
@@ -69,8 +75,44 @@ static void increment(uint32_t *p) {
     __atomic_store_n(p, v + 1u, __ATOMIC_RELAXED);
 }
 
+// 既に登録済みのEndPoint/Addressのインデックスを返す．なければ新規登録する．登録済みの数がSTREAM_ENDPOINT_SLOTSを超える場合は-1を返す．
+static int get_endpoint_slot(uint32_t addr, uint32_t ep) {
+    for (uint32_t i = 0; i < endpoint_count; i++) {
+        if (endpoints[i].addr == addr && endpoints[i].ep == ep)
+            return (int)i;
+    }
+    if (endpoint_count == STREAM_ENDPOINT_SLOTS) {
+        increment(&stats.endpoint_overflow);
+        return -1;
+    }
+    uint32_t i = endpoint_count;
+    endpoints[i].addr = addr;
+    endpoints[i].ep = ep;
+    endpoints[i].in_tokens = 0;
+    endpoints[i].data_packets = 0;
+    endpoints[i].nak_packets = 0;
+    __atomic_store_n(&endpoint_count, i + 1u, __ATOMIC_RELEASE);
+    return (int)i;
+}
+
+uint32_t stream_decode_get_endpoints(stream_endpoint_stats_t *out, uint32_t capacity) {
+    uint32_t count = __atomic_load_n(&endpoint_count, __ATOMIC_ACQUIRE);
+    if (count > capacity) count = capacity;
+    for (uint32_t i = 0; i < count; ++i) {
+        out[i].addr = __atomic_load_n(&endpoints[i].addr, __ATOMIC_RELAXED);
+        out[i].ep = __atomic_load_n(&endpoints[i].ep, __ATOMIC_RELAXED);
+        out[i].in_tokens = __atomic_load_n(&endpoints[i].in_tokens, __ATOMIC_RELAXED);
+        out[i].data_packets = __atomic_load_n(&endpoints[i].data_packets, __ATOMIC_RELAXED);
+        out[i].nak_packets = __atomic_load_n(&endpoints[i].nak_packets, __ATOMIC_RELAXED);
+    }
+    return count;
+}
+
 void stream_decode_init(void) {
     // Must only be called before the producer and consumer start.
+    endpoint_count = 0;
+    pending_in = false;
+    pending_slot = 0;
     uint32_t *p = (uint32_t *)&stats;
     for (unsigned i = 0; i < sizeof(stats)/sizeof(uint32_t); ++i)
         __atomic_store_n(&p[i], 0, __ATOMIC_RELAXED);
@@ -110,13 +152,16 @@ void stream_decode_packet(const stream_packet_t *packet) {
     uint32_t v = 0x80000000u;
 
     // Original process_buffer() called process_packet(size - 1).
+    // ビット数の確定
     uint32_t remaining = (packet->bit_count > 0) ? packet->bit_count - 1u : 0u;
     uint32_t word = 0;
 
     // The original process_buffer() treats 0 as bus reset, and 1 as
     // an FS event to discard. Neither is a malformed USB packet.
-    if (packet->bit_count <= 1u)
+    if (packet->bit_count <= 1u) {
+        pending_in = false;
         goto done;
+    }
     if (remaining > packet->word_count * 31u) {
         error |= CAPTURE_ERROR_SIZE;
         goto done;
@@ -130,12 +175,16 @@ void stream_decode_packet(const stream_packet_t *packet) {
         uint32_t w = packet->words[word++];
         uint32_t bits = remaining < 31u ? remaining : 31u;
         if (bits < 31u) w <<= (30u - bits);
+        // NRZI復号
         v ^= w ^ (w << 1);
 
         for (uint32_t i = 0; i < bits; i++) {
+            // NRZI復号後のビット列を1bitずつ取り出す
             int bit = (v & 0x80000000u) ? 0 : 1;
             v <<= 1;
+            // USBは6bit連続で同じビットが続くとstuffビット(0)が挿入されるため，stuffビットを除去
             if (stuff_count == 6) {
+                // 7連続で1が続く場合はBit Stuffing Error
                 if (bit) error |= CAPTURE_ERROR_STUFF;
                 stuff_count = 0;
                 continue;
@@ -144,6 +193,8 @@ void stream_decode_packet(const stream_packet_t *packet) {
                 stuff_count++;
             else
                 stuff_count = 0;
+
+            // 1bitずつバイト列に変換
             out_byte |= bit << out_bit;
             out_bit++;
             if (out_bit == 8) {
@@ -163,12 +214,16 @@ void stream_decode_packet(const stream_packet_t *packet) {
     if (out_size < 2) { error |= CAPTURE_ERROR_SIZE; goto done; }
 
     // Targets Full-Speed. Low-Speed support can be configured later.
+    // SYNC検証
     if (decoded[0] != 0x80) error |= CAPTURE_ERROR_SYNC;
 
+    // PID検証
+    // PIDの上位4bitは下位4bitのビット反転値である必要がある
     int pid = decoded[1] & 0x0f;
     int npid = (~decoded[1] >> 4) & 0x0f;
     if (pid != npid || pid == Pid_Reserved) error |= CAPTURE_ERROR_PID;
 
+    // CRC検証
     if (pid == Pid_Sof || pid == Pid_In || pid == Pid_Out ||
         pid == Pid_Setup || pid == Pid_Ping || pid == Pid_Split) {
         if ((pid == Pid_Split && out_size != 5) ||
@@ -185,9 +240,59 @@ void stream_decode_packet(const stream_packet_t *packet) {
     }
 
     if (!error) {
-        if (pid == Pid_In) increment(&stats.in);
-        else if (pid == Pid_Data0 || pid == Pid_Data1) increment(&stats.data);
-        else if (pid == Pid_Sof) increment(&stats.sof);
+        if (pid == Pid_In) {
+            increment(&stats.in);
+
+            // IN Token(16bit)
+            // Addr(7bit) | EndPoint(4bit) | CRC5(5bit)
+            uint32_t token =
+                (uint32_t)decoded[2] |
+                ((uint32_t)decoded[3] << 8);
+
+            uint32_t addr = token & 0x7fu;
+            uint32_t ep = (token >> 7) & 0x0fu;
+
+            int slot = get_endpoint_slot(addr, ep);
+
+            // INトークンを受信し，応答待ち状態
+            pending_in = (slot >= 0);
+
+            if (pending_in) {
+                pending_slot = (uint32_t)slot;
+                increment(&endpoints[slot].in_tokens);
+            }
+        }
+        else if (pid == Pid_Data0 || pid == Pid_Data1) {
+            increment(&stats.data);
+
+            if (pending_in) {
+                increment(&endpoints[pending_slot].data_packets);
+                increment(&stats.matched_data);
+            }
+            else {
+                increment(&stats.unmatched_data);
+            }
+
+            pending_in = false;
+        }
+        // NAKはINトークンに対する応答であるため，pending_inがtrueのときのみカウント
+        else if (pid == Pid_Nak) {
+            if (pending_in)
+                increment(&endpoints[pending_slot].nak_packets);
+
+            pending_in = false;
+        }
+        // その他のPIDはINトークンに対する応答ではないため，待機状態を解除
+        else if (pid == Pid_Sof) {
+            increment(&stats.sof);
+            pending_in = false;
+        }
+        else {
+            pending_in = false;
+        }
+    }
+    else {
+        pending_in = false;
     }
 
 done:

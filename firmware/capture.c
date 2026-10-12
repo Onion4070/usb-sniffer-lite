@@ -13,6 +13,7 @@
 #include "globals.h"
 #include "stream_queue.h"
 #include "stream_decode.h"
+#include "stream_output.h"
 #include "hal_gpio.h"
 #include "pio_asm.h"
 #include "rp2040.h"
@@ -102,7 +103,7 @@ static int capture_limit_value(void) {
     else if (g_capture_limit == CaptureLimit_10000)
         return 10000;
     else
-        return 100000;
+        return 0;  // Unlimited
 }
 
 //-----------------------------------------------------------------------------
@@ -282,6 +283,9 @@ static void capture_buffer(void) {
 
     uint32_t start_dropped = stream_queue_dropped();
     uint32_t start_consumed = stream_queue_consumed();
+    uint32_t output_before_queued = stream_output_queued();
+    uint32_t output_before_dropped = stream_output_dropped();
+    uint32_t output_before_too_long = stream_output_too_long();
     stream_decode_stats_t before, after;
     stream_decode_get_stats(&before);
 
@@ -333,7 +337,8 @@ static void capture_buffer(void) {
                 too_long = false;
 
                 // キャプチャ制限に達していたら終了
-                if (captured >= (uint32_t)g_buffer_info.limit) break;
+                if (g_buffer_info.limit != 0 && captured >= (uint32_t)g_buffer_info.limit)
+                    break;
 
             } 
             else {
@@ -418,6 +423,13 @@ static void capture_buffer(void) {
     stream_endpoint_stats_t endpoint_after[STREAM_ENDPOINT_SLOTS];
     uint32_t endpoint_after_count = stream_decode_get_endpoints(
         endpoint_after, STREAM_ENDPOINT_SLOTS);
+    display_puts("OutputQueued=");
+    display_putdec(stream_output_queued() - output_before_queued, 0);
+    display_puts(" OutputDropped=");
+    display_putdec(stream_output_dropped() - output_before_dropped, 0);
+    display_puts(" OutputOversized=");
+    display_putdec(stream_output_too_long() - output_before_too_long, 0);
+    display_puts("\r\n");
     display_puts("Endpoint statistics (this capture):\r\n");
     for (uint32_t i = 0; i < endpoint_after_count; ++i) {
         const stream_endpoint_stats_t *entry = &endpoint_after[i];

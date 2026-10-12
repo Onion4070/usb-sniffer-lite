@@ -1,4 +1,5 @@
 #include "stream_decode.h"
+#include "stream_output.h"
 #include "capture.h"
 #include "globals.h"
 #include <stdint.h>
@@ -317,6 +318,14 @@ void stream_decode_packet(const stream_packet_t *packet) {
             if (pending_in) {
                 increment(&endpoints[pending_slot].data_packets);
                 increment(&stats.matched_data);
+                // out_size contains SYNC + PID + payload + CRC16.
+                // Only the USB payload is forwarded (no SYNC/PID/CRC bytes).
+                if (out_size >= 4)
+                    (void)stream_output_push(
+                        (uint8_t)endpoints[pending_slot].addr,
+                        (uint8_t)endpoints[pending_slot].ep,
+                        (uint8_t)pid, packet->timestamp,
+                        &decoded[2], (uint16_t)(out_size - 4));
             }
             else {
                 increment(&stats.unmatched_data);

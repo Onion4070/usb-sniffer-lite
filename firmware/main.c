@@ -11,6 +11,7 @@
 #include "capture.h"
 #include "stream_queue.h"
 #include "stream_decode.h"
+#include "stream_output.h"
 #include "globals.h"
 #include "utils.h"
 #include "usb.h"
@@ -37,6 +38,9 @@ static bool app_send_zlp = false;
 static bool app_send_pending = false;
 static bool app_recv_pending = false;
 static bool app_vcp_open = false;
+// CDC binary frames must never be interleaved with SIO text messages.
+static uint8_t output_frame[STREAM_OUTPUT_MAX_FRAME];
+static uint16_t output_length, output_position;
 
 /*- Implementations ---------------------------------------------------------*/
 static void stream_consumer_task(void) {
@@ -183,21 +187,36 @@ void usb_cdc_send_callback(void) { app_send_pending = false; }
 static void display_task(void) {
     if (!app_vcp_open) {
         while (SIO->FIFO_ST & SIO_FIFO_ST_VLD_Msk) (void)SIO->FIFO_RD;
+        // Drain pending output on disconnect so it cannot accumulate forever.
+        uint16_t ignored;
+        while (stream_output_pop(output_frame, &ignored)) { }
+        output_position = output_length = 0;
         return;
     }
 
     if (app_send_pending) return;
 
-    while (SIO->FIFO_ST & SIO_FIFO_ST_VLD_Msk) {
-        app_send_buffer[app_send_buffer_ptr++] = SIO->FIFO_RD;
-
-        reset_vcp_timeout();
-
-        if (USB_BUFFER_SIZE == app_send_buffer_ptr) {
-            send_buffer();
+    while (app_send_buffer_ptr < USB_BUFFER_SIZE) {
+        // Once a frame has started, finish it before consuming any text.
+        if (output_position < output_length) {
+            app_send_buffer[app_send_buffer_ptr++] = output_frame[output_position++];
+        }
+        else if (SIO->FIFO_ST & SIO_FIFO_ST_VLD_Msk) {
+            // Text has priority BETWEEN frames (Capture started/stopped etc.).
+            app_send_buffer[app_send_buffer_ptr++] = (uint8_t)SIO->FIFO_RD;
+        }
+        else if (stream_output_pop(output_frame, &output_length)) {
+            output_position = 0;
+            continue;
+        } 
+        else {
             break;
         }
+        reset_vcp_timeout();
     }
+
+    if (app_send_buffer_ptr == USB_BUFFER_SIZE)
+        send_buffer();
 }
 
 //-----------------------------------------------------------------------------
@@ -277,6 +296,7 @@ int main(void) {
     serial_number_init();
 
     stream_queue_init();
+    stream_output_init();
     stream_decode_init();
 
     capture_init();

@@ -12,6 +12,7 @@
 #include "stream_queue.h"
 #include "stream_decode.h"
 #include "stream_output.h"
+#include "stream_drain.h"
 #include "globals.h"
 #include "utils.h"
 #include "usb.h"
@@ -43,6 +44,8 @@ static uint8_t output_frame[STREAM_OUTPUT_MAX_FRAME];
 static uint16_t output_length, output_position;
 
 /*- Implementations ---------------------------------------------------------*/
+
+//-----------------------------------------------------------------------------
 static void stream_consumer_task(void) {
     stream_packet_t packet;
 
@@ -52,6 +55,23 @@ static void stream_consumer_task(void) {
 
         stream_decode_packet(&packet);
     }
+}
+
+//-----------------------------------------------------------------------------
+static bool cdc_output_idle(void) {
+    if (output_position != output_length)
+        return false;
+
+    if (SIO->FIFO_ST & SIO_FIFO_ST_VLD_Msk)
+        return false;
+
+    if (app_vcp_open &&
+        (app_send_pending ||
+         app_send_buffer_ptr != 0 ||
+         app_send_zlp))
+        return false;
+
+    return true;
 }
 
 //-----------------------------------------------------------------------------
@@ -315,6 +335,7 @@ int main(void) {
 
         display_task();
         vcp_timer_task();
+        stream_drain_task(cdc_output_idle());
         status_timer_task();
     }
 

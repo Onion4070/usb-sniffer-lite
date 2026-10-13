@@ -14,6 +14,7 @@
 #include "stream_queue.h"
 #include "stream_decode.h"
 #include "stream_output.h"
+#include "stream_drain.h"
 #include "hal_gpio.h"
 #include "pio_asm.h"
 #include "rp2040.h"
@@ -306,7 +307,10 @@ static void capture_buffer(void) {
         }
     }
 
+    // Ensure the start message has completely left CDC before binary frames.
     display_puts("Capture started\r\n");
+    uint32_t start_drain = stream_drain_request();
+    while (!stream_drain_complete(start_drain)) { }
 
     PIO1_SET->CTRL = (1 << (PIO0_CTRL_SM_ENABLE_Pos + 0));
     PIO0_SET->CTRL = (1 << (PIO0_CTRL_SM_ENABLE_Pos + 0));
@@ -370,6 +374,12 @@ static void capture_buffer(void) {
 
     stream_decode_get_stats(&after);
 
+    // All binary frames, including the final partially filled CDC packet,
+    // must complete before any human-readable statistics are queued.
+    uint32_t stop_drain = stream_drain_request();
+    while (!stream_drain_complete(stop_drain)) { }
+
+    display_puts("\r\n");
     display_puts("Capture stopped: packets=");
     display_putdec(captured, 0);
 

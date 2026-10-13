@@ -4,7 +4,7 @@
 #include <stdint.h>
 #define STREAM_OUTPUT_SLOTS 64u
 #define STREAM_OUTPUT_MAX_PAYLOAD 192u
-#define STREAM_OUTPUT_MAX_FRAME (STREAM_OUTPUT_MAX_PAYLOAD + 8u)
+#define STREAM_OUTPUT_MAX_FRAME (STREAM_OUTPUT_MAX_PAYLOAD + 13u)
 void stream_output_init(void);
 // Core 0 only: enqueue a complete, CRC-validated IN response.
 bool stream_output_push(uint8_t addr, uint8_t ep, uint8_t pid, uint32_t timestamp,

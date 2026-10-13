@@ -7,11 +7,11 @@ typedef struct {
 } output_frame_t;
 
 static output_frame_t queue[STREAM_OUTPUT_SLOTS];
-static uint32_t wr, rd;
+static uint32_t write_index, read_index;
 static uint32_t queued, dropped, too_long;
 
 void stream_output_init(void) {
-    wr = rd = queued = dropped = too_long = 0;
+    write_index = read_index = queued = dropped = too_long = 0;
 }
 
 bool stream_output_push(uint8_t addr, uint8_t ep, uint8_t pid, uint32_t timestamp,
@@ -20,11 +20,11 @@ bool stream_output_push(uint8_t addr, uint8_t ep, uint8_t pid, uint32_t timestam
         __atomic_store_n(&too_long, too_long + 1u, __ATOMIC_RELAXED);
         return false;
     }
-    if ((uint32_t)(wr - rd) >= STREAM_OUTPUT_SLOTS) {
+    if ((uint32_t)(write_index - read_index) >= STREAM_OUTPUT_SLOTS) {
         __atomic_store_n(&dropped, dropped + 1u, __ATOMIC_RELAXED);
         return false;
     }
-    output_frame_t *frame = &queue[wr % STREAM_OUTPUT_SLOTS];
+    output_frame_t *frame = &queue[write_index % STREAM_OUTPUT_SLOTS];
     // AA 55 | Address | Endpoint | PID | Timestamp LE32 | Payload Length LE16 | Payload | CRC16-CCITT-FALSE LE16.
     uint8_t *dst = frame->bytes;
     dst[0] = 0xaa;
@@ -51,17 +51,17 @@ bool stream_output_push(uint8_t addr, uint8_t ep, uint8_t pid, uint32_t timestam
     dst[11u + length] = (uint8_t)crc;
     dst[12u + length] = (uint8_t)(crc >> 8);
     frame->length = (uint16_t)(length + 13u);
-    wr++;
+    write_index++;
     __atomic_store_n(&queued, queued + 1u, __ATOMIC_RELAXED);
     return true;
 }
 
 bool stream_output_pop(uint8_t *destination, uint16_t *length) {
-    if (wr == rd) return false;
-    const output_frame_t *frame = &queue[rd % STREAM_OUTPUT_SLOTS];
+    if (write_index == read_index) return false;
+    const output_frame_t *frame = &queue[read_index % STREAM_OUTPUT_SLOTS];
     *length = frame->length;
     memcpy(destination, frame->bytes, *length);
-    rd++;
+    read_index++;
     return true;
 }
 
@@ -82,5 +82,5 @@ uint32_t stream_output_too_long(void) {
 
 // Core 0 only: return the number of complete frames that have been queued but not yet popped.
 uint32_t stream_output_pending(void) { 
-    return wr-rd; 
+    return write_index-read_index; 
 }

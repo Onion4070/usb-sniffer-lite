@@ -201,30 +201,39 @@ static void send_buffer(void) {
 }
 
 //-----------------------------------------------------------------------------
-void usb_cdc_send_callback(void) { app_send_pending = false; }
+void usb_cdc_send_callback(void) { 
+    app_send_pending = false; 
+}
 
 //-----------------------------------------------------------------------------
 static void display_task(void) {
+    // PCとの接続が無い
     if (!app_vcp_open) {
+        // 出力文字列をすべて破棄
         while (SIO->FIFO_ST & SIO_FIFO_ST_VLD_Msk) (void)SIO->FIFO_RD;
-        // Drain pending output on disconnect so it cannot accumulate forever.
+        // 出力フレームをすべて破棄
         uint16_t ignored;
         while (stream_output_pop(output_frame, &ignored)) { }
         output_position = output_length = 0;
         return;
     }
 
+    // 前回のUSB CDC送信が完了するまで待機
     if (app_send_pending) return;
 
+    // USB送信バッファに空きがある限り，SIOのテキストとバイナリフレームを書き込み
+    // 64バイト未満のバッファはvcp_timer_task()でタイムアウト時に送信される
     while (app_send_buffer_ptr < USB_BUFFER_SIZE) {
-        // Once a frame has started, finish it before consuming any text.
+        // バイナリフレームを書き込み
         if (output_position < output_length) {
             app_send_buffer[app_send_buffer_ptr++] = output_frame[output_position++];
         }
+        // SIOのテキスト出力があれば書き込み
         else if (SIO->FIFO_ST & SIO_FIFO_ST_VLD_Msk) {
             // Text has priority BETWEEN frames (Capture started/stopped etc.).
             app_send_buffer[app_send_buffer_ptr++] = (uint8_t)SIO->FIFO_RD;
         }
+        // バイナリフレームを取得，次のループで書き込み
         else if (stream_output_pop(output_frame, &output_length)) {
             output_position = 0;
             continue;
@@ -235,6 +244,7 @@ static void display_task(void) {
         reset_vcp_timeout();
     }
 
+    // USB送信バッファが満杯になったら送信
     if (app_send_buffer_ptr == USB_BUFFER_SIZE)
         send_buffer();
 }

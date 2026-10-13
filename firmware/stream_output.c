@@ -65,7 +65,22 @@ bool stream_output_pop(uint8_t *destination, uint16_t *length) {
     return true;
 }
 
-uint32_t stream_output_queued(void) { return __atomic_load_n(&queued, __ATOMIC_RELAXED); }
-uint32_t stream_output_dropped(void) { return __atomic_load_n(&dropped, __ATOMIC_RELAXED); }
-uint32_t stream_output_too_long(void) { return __atomic_load_n(&too_long, __ATOMIC_RELAXED); }
-uint32_t stream_output_pending(void) { return wr-rd; }
+// Core 0 only: return the number of complete frames that have been queued.
+uint32_t stream_output_queued(void) { 
+    return __atomic_load_n(&queued, __ATOMIC_RELAXED); 
+}
+
+// Core 0 only: return the number of complete frames that have been dropped.
+uint32_t stream_output_dropped(void) {
+    return __atomic_load_n(&dropped, __ATOMIC_RELAXED);
+}
+
+// Core 0 only: return the number of complete frames that have been dropped due to exceeding the maximum payload size.
+uint32_t stream_output_too_long(void) { 
+    return __atomic_load_n(&too_long, __ATOMIC_RELAXED); 
+}
+
+// Core 0 only: return the number of complete frames that have been queued but not yet popped.
+uint32_t stream_output_pending(void) { 
+    return wr-rd; 
+}

@@ -124,6 +124,7 @@ static int get_endpoint_slot(uint32_t addr, uint32_t ep) {
 
 // Called from Core 1 before starting PIO. Completion is checked separately.
 uint32_t stream_decode_request_endpoint_reset(void) {
+    // リセット要求を発行，Core 0 のstream_decode_service()での処理待ち
     uint32_t request = __atomic_load_n(&reset_request, __ATOMIC_RELAXED) + 1u;
     __atomic_store_n(&reset_request, request, __ATOMIC_RELEASE);
     return request;
@@ -136,8 +137,10 @@ bool stream_decode_endpoint_reset_complete(uint32_t request) {
 // Core 0 only; run before consuming new queue items.
 void stream_decode_service(void) {
     uint32_t request = __atomic_load_n(&reset_request, __ATOMIC_ACQUIRE);
+    // リセット完了済み(request == reset_ack)なら何もしない
     if (request == __atomic_load_n(&reset_ack, __ATOMIC_RELAXED)) return;
 
+    // テーブルを論理的に初期化
     endpoint_count = 0;
     pending_in = false;
     pending_slot = 0;
